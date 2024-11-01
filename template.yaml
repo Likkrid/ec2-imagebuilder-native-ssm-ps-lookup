@@ -1,0 +1,433 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Image Builder pipeline using SSM Parameter Store for AMI ID
+
+Parameters:
+  SSMParameterNameForAMI:
+    Type: String
+    Description: SSM Parameter name for the AMI ID
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  InstanceTypes:
+    Type: String
+    Default: t3.micro
+    Description: EC2 Instance type for building the image
+
+  VolumeSize:
+    Type: Number
+    Default: 8
+    Description: Volume size for the image (in GiB)
+
+  VolumeType:
+    Type: String
+    Default: gp2
+    Description: Volume type for the image
+
+Resources:
+  ImageBuilderExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: imagebuilder.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ImageBuilderExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource:
+                  - arn:aws:ec2:*::image/*
+                  - arn:aws:ec2:*::snapshot/*
+                  - arn:aws:ec2:*:*:subnet/*
+                  - arn:aws:ec2:*:*:network-interface/*
+                  - arn:aws:ec2:*:*:security-group/*
+                  - arn:aws:ec2:*:*:key-pair/*
+                  - arn:aws:ec2:*:*:launch-template/*
+                  - arn:aws:license-manager:*:*:license-configuration:*
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource:
+                  - arn:aws:ec2:*:*:volume/*
+                  - arn:aws:ec2:*:*:instance/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+                      - EC2 Fast Launch
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - ec2.amazonaws.com
+                      - ec2.amazonaws.com.cn
+                      - vmie.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - ec2:StopInstances
+                  - ec2:StartInstances
+                  - ec2:TerminateInstances
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:CopyImage
+                  - ec2:CreateImage
+                  - ec2:CreateLaunchTemplate
+                  - ec2:DeregisterImage
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstanceAttribute
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceTypeOfferings
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                  - ec2:ModifyImageAttribute
+                  - ec2:DescribeImportImageTasks
+                  - ec2:DescribeExportImageTasks
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeHosts
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:ModifySnapshotAttribute
+                Resource: arn:aws:ec2:*::snapshot/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - RunInstances
+                      - CreateImage
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+                      - EC2 Fast Launch
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - arn:aws:ec2:*::image/*
+                  - arn:aws:ec2:*:*:export-image-task/*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - arn:aws:ec2:*::snapshot/*
+                  - arn:aws:ec2:*:*:launch-template/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+                      - EC2 Fast Launch
+              - Effect: Allow
+                Action:
+                  - license-manager:UpdateLicenseSpecificationsForResource
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ssm:ListCommands
+                  - ssm:ListCommandInvocations
+                  - ssm:AddTagsToResource
+                  - ssm:DescribeInstanceInformation
+                  - ssm:GetAutomationExecution
+                  - ssm:StopAutomationExecution
+                  - ssm:ListInventoryEntries
+                  - ssm:SendAutomationSignal
+                  - ssm:DescribeInstanceAssociationsStatus
+                  - ssm:DescribeAssociationExecutions
+                  - ssm:GetCommandInvocation
+                Resource: '*'
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - arn:aws:ssm:*:*:document/AWS-RunPowerShellScript
+                  - arn:aws:ssm:*:*:document/AWS-RunShellScript
+                  - arn:aws:ssm:*:*:document/AWSEC2-RunSysprep
+                  - arn:aws:s3:::*
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - arn:aws:ec2:*:*:instance/*
+                Condition:
+                  StringEquals:
+                    ssm:resourceTag/CreatedBy:
+                      - EC2 Image Builder
+              - Effect: Allow
+                Action: ssm:StartAutomationExecution
+                Resource: arn:aws:ssm:*:*:automation-definition/ImageBuilder*
+              - Effect: Allow
+                Action:
+                  - ssm:CreateAssociation
+                  - ssm:DeleteAssociation
+                Resource:
+                  - arn:aws:ssm:*:*:document/AWS-GatherSoftwareInventory
+                  - arn:aws:ssm:*:*:association/*
+                  - arn:aws:ec2:*:*:instance/*
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncryptFrom
+                  - kms:ReEncryptTo
+                  - kms:GenerateDataKeyWithoutPlaintext
+                Resource: '*'
+                Condition:
+                  ForAllValues:StringEquals:
+                    kms:EncryptionContextKeys:
+                      - aws:ebs:id
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - kms:DescribeKey
+                Resource: '*'
+                Condition:
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action: kms:CreateGrant
+                Resource: '*'
+                Condition:
+                  Bool:
+                    kms:GrantIsForAWSResource: true
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: arn:aws:iam::*:role/EC2ImageBuilderDistributionCrossAccountRole
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:log-group:/aws/imagebuilder/*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateLaunchTemplateVersion
+                  - ec2:DescribeLaunchTemplates
+                  - ec2:ModifyLaunchTemplate
+                  - ec2:DescribeLaunchTemplateVersions
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:ExportImage
+                Resource: arn:aws:ec2:*::image/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:ExportImage
+                Resource: arn:aws:ec2:*:*:export-image-task/*
+              - Effect: Allow
+                Action:
+                  - ec2:CancelExportTask
+                Resource: arn:aws:ec2:*:*:export-image-task/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - ssm.amazonaws.com
+                      - ec2fastlaunch.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - ec2:EnableFastLaunch
+                Resource:
+                  - arn:aws:ec2:*::image/*
+                  - arn:aws:ec2:*:*:launch-template/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ecr:BatchDeleteImage
+                Resource: arn:aws:ecr:*:*:repository/image-builder-*
+                Condition:
+                  StringEquals:
+                    ecr:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                Resource:
+                  - arn:aws:events:*:*:rule/ImageBuilder-*
+
+  ImageBuilderInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${AWS::StackName}-ImageBuilderInstanceProfile
+      Roles:
+        - !Ref ImageBuilderInstanceRole
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-EventBridgeImageBuilderPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - imagebuilder:StartImagePipelineExecution
+                Resource: !Ref ImagePipeline
+
+  CustomLaunchWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Version: 1.0.0
+      Description: Custom workflow to launch instance with SSM Parameter Store AMI ID
+      Type: BUILD
+      Name: !Sub ${AWS::StackName}-CustomLaunchWorkflow
+      Data: !Sub |
+        name: ${AWS::StackName}-build-image-custom-workflow
+        description: This is a customized workflow to build an AMI based on SSM Parameter Store
+        schemaVersion: 1.0
+        steps:
+          - name: LaunchStage
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              imageIdOverride: "resolve:ssm:${SSMParameterNameForAMI}"
+              waitFor: "ssmAgent"
+
+          - name: CreateCustomAMI
+            action: CreateImage
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchStage.instanceId"
+
+          - name: TerminateInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchStage.instanceId"
+        outputs:
+          - name: "ImageId"
+            value: "$.stepOutputs.CreateCustomAMI.imageId"
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub ${AWS::StackName}-CustomImageRecipe
+      Version: 1.0.0
+      Components:
+        - ComponentArn: !Sub arn:aws:imagebuilder:${AWS::Region}:aws:component/amazon-cloudwatch-agent-linux/1.0.1
+      ParentImage: !Sub arn:aws:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2-x86/x.x.x
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: !Ref VolumeType
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub ${AWS::StackName}-InfrastructureConfig
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes:
+        - !Ref InstanceTypes
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Sub ${AWS::StackName}-DistributionConfig
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: !Sub ${AWS::StackName}-AMI-{{imagebuilder:buildDate}}
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub ${AWS::StackName}-ImagePipeline
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ImageBuilderExecutionRole.Arn
+      Workflows:
+        - WorkflowArn: !Ref CustomLaunchWorkflow
+
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${AWS::StackName}-SSMParameterChangeRule
+      EventPattern:
+        source:
+          - "aws.ssm"
+        detail-type:
+          - "Parameter Store Change"
+        detail:
+          operation:
+            - "Update"
+            - "Create"
+          name:
+            - !Ref SSMParameterNameForAMI
+      Targets:
+        - Arn: !GetAtt ImagePipeline.Arn
+          Id: "TargetFunctionV1"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+Outputs:
+  ImagePipelineArn:
+    Description: ARN of the created Image Pipeline
+    Value: !Ref ImagePipeline
+  SSMParameterUsed:
+    Description: SSM Parameter used for AMI ID
+    Value: !Ref SSMParameterNameForAMI
