@@ -421,7 +421,7 @@ Resources:
             - !Ref SSMParameterNameForAMI
       Targets:
         - Arn: !GetAtt ImagePipeline.Arn
-          Id: "TargetFunctionV1"
+          Id: "TargetIBPipeline"
           RoleArn: !GetAtt EventBridgeRole.Arn
 
 Outputs:
